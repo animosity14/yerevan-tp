@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Card Status Checker</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        .card-info {
+            background: #fff;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+        }
+        pre {
+            background-color: #2d2d2d;
+            color: #f8f8f2;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Transport Ticket Status</h1>
+    
+    <div class="card-info">
+        <strong>Checking Card Number:</strong> <span id="cardNumberDisplay">Loading...</span>
+    </div>
+
+    <h2>API Response</h2>
+    <pre id="jsonOutput">Waiting for response...</pre>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const outputElement = document.getElementById('jsonOutput');
+            const cardDisplayElement = document.getElementById('cardNumberDisplay');
+
+            // 1. Extract the card number from the URL parameter '?card=...'
+            // Example: https://localhost/index.html?card=9374001000123456 -> 9374001000123456
+            const urlParams = new URLSearchParams(window.location.search);
+            const cardNumber = urlParams.get('card');
+
+            // Validate that we actually got a number
+            if (!cardNumber || isNaN(cardNumber)) {
+                cardDisplayElement.innerHTML = '<span class="error">No valid card parameter found in URL.</span>';
+                outputElement.textContent = 'Please use a URL format like: ?card=9374001000123456';
+                return;
+            }
+
+            cardDisplayElement.textContent = cardNumber;
+            outputElement.textContent = 'Fetching data...';
+            const targetUrl = 'https://transport-api.yerevan.am/api/citizen/card-status/';
+            const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
+            // 2. Make the POST request to the API
+            fetch(proxyUrl, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json, text/plain, */*',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ card_number: cardNumber })
+            })
+            .then(async response => {
+                // Parse the JSON response
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status} - ${JSON.stringify(data)}`);
+                }
+                
+                return data;
+            })
+            .then(data => {
+                // Display formatted JSON
+                outputElement.textContent = JSON.stringify(data, null, 4);
+            })
+            .catch(error => {
+                console.error('Fetch Error:', error);
+                outputElement.innerHTML = `<span class="error">Error fetching data:</span>\n${error.message}\n\n(Note: If the API blocks this request, check your browser console for CORS errors).`;
+            });
+        });
+    </script>
+</body>
+</html>
