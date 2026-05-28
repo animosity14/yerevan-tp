@@ -3,100 +3,217 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Card Status Checker</title>
+    <title>Transport Card Checker</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f4f4f9;
-            color: #333;
-            max-width: 800px;
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 600px;
             margin: 2rem auto;
             padding: 0 1rem;
+            color: #333;
+            line-height: 1.5;
         }
-        h1 {
-            color: #2c3e50;
+        h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+        form { margin-bottom: 2rem; display: flex; gap: 0.5rem; }
+        input[type="text"] {
+            flex: 1;
+            padding: 0.5rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
         }
-        .card-info {
-            background: #fff;
+        button {
+            padding: 0.5rem 1rem;
+            background: #eee;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background: #ddd; }
+        .error { color: red; margin-bottom: 1rem; }
+        .loading { font-style: italic; color: #666; margin-bottom: 1rem; }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 4px;
             padding: 1rem;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             margin-bottom: 1rem;
         }
-        pre {
-            background-color: #2d2d2d;
-            color: #f8f8f2;
-            padding: 1rem;
-            border-radius: 8px;
-            overflow-x: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        .error {
-            color: #e74c3c;
-            font-weight: bold;
+        .card h2 { margin: 0 0 0.5rem 0; font-size: 1.25rem; }
+        .details { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; }
+        .label { color: #666; }
+        .value { font-weight: 500; }
+        .status {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            background: #eee;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
         }
     </style>
 </head>
 <body>
 
-    <h1>Transport Ticket Status</h1>
+    <h1>Card Status</h1>
     
-    <div class="card-info">
-        <strong>Checking Card Number:</strong> <span id="cardNumberDisplay">Loading...</span>
-    </div>
+    <form id="searchForm">
+        <input type="text" id="cardNumberInput" placeholder="0000 0000 0000 0000" title="16 digit card number" required pattern="\d{4} \d{4} \d{4} \d{4}" maxlength="19">
+        <button type="submit">Check</button>
+    </form>
 
-    <h2>API Response</h2>
-    <pre id="jsonOutput">Waiting for response...</pre>
+    <div id="statusMsg"></div>
+    <div id="resultsContainer"></div>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            const outputElement = document.getElementById('jsonOutput');
-            const cardDisplayElement = document.getElementById('cardNumberDisplay');
+            const form = document.getElementById('searchForm');
+            const input = document.getElementById('cardNumberInput');
+            const resultsContainer = document.getElementById('resultsContainer');
+            const statusMsg = document.getElementById('statusMsg');
 
-            // 1. Extract the card number from the URL parameter '?card=...'
-            // Example: https://localhost/index.html?card=9374001000123456 -> 9374001000123456
-            const urlParams = new URLSearchParams(window.location.search);
-            const cardNumber = urlParams.get('card');
-
-            // Validate that we actually got a number
-            if (!cardNumber || isNaN(cardNumber)) {
-                cardDisplayElement.innerHTML = '<span class="error">No valid card parameter found in URL.</span>';
-                outputElement.textContent = 'Please use a URL format like: ?card=9374001000123456';
-                return;
+            function isValidLuhn(value) {
+                if (!/^\d+$/.test(value)) return false;
+                if (value.length != 16) return false;
+                let nCheck = 0, bEven = false;
+                for (let n = value.length - 1; n >= 0; n--) {
+                    let cDigit = value.charAt(n),
+                        nDigit = parseInt(cDigit, 10);
+                    if (bEven && (nDigit *= 2) > 9) nDigit -= 9;
+                    nCheck += nDigit;
+                    bEven = !bEven;
+                }
+                return (nCheck % 10) == 0;
             }
 
-            cardDisplayElement.textContent = cardNumber;
-            outputElement.textContent = 'Fetching data...';
-            const targetUrl = 'https://transport-api.yerevan.am/api/citizen/card-status/';
-            const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
-            // 2. Make the POST request to the API
-            fetch(proxyUrl, {
-                method: 'POST',
-                headers: {
-                    'Accept': 'application/json, text/plain, */*',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ card_number: cardNumber })
-            })
-            .then(async response => {
-                // Parse the JSON response
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! Status: ${response.status} - ${JSON.stringify(data)}`);
+            function processCard(cardNumber, updateUrl = false) {
+                if (!isValidLuhn(cardNumber)) {
+                    showError('Invalid card number, please double check.');
+                    return;
                 }
-                
-                return data;
-            })
-            .then(data => {
-                // Display formatted JSON
-                outputElement.textContent = JSON.stringify(data, null, 4);
-            })
-            .catch(error => {
-                console.error('Fetch Error:', error);
-                outputElement.innerHTML = `<span class="error">Error fetching data:</span>\n${error.message}\n\n(Note: If the API blocks this request, check your browser console for CORS errors).`;
+                if (updateUrl) {
+                    const newUrl = new URL(window.location);
+                    newUrl.searchParams.set('card', cardNumber);
+                    window.history.pushState({}, '', newUrl);
+                }
+                fetchCardData(cardNumber);
+            }
+
+            function formatCardNumber(value) {
+                return value.replace(/\D/g, '').substring(0, 16).replace(/(.{4})/g, '$1 ').trim();
+            }
+
+            input.addEventListener('input', (e) => {
+                const start = e.target.selectionStart;
+                const oldLength = e.target.value.length;
+                e.target.value = formatCardNumber(e.target.value);
+                const newLength = e.target.value.length;
+                e.target.setSelectionRange(start + (newLength - oldLength), start + (newLength - oldLength));
             });
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const initialCard = urlParams.get('card');
+            if (initialCard) {
+                input.value = formatCardNumber(initialCard);
+                processCard(initialCard.replace(/\D/g, ''), false);
+            }
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const cardNumber = input.value.replace(/\s/g, '');
+                if (cardNumber) {
+                    processCard(cardNumber, true);
+                }
+            });
+
+            function showError(message) {
+                statusMsg.innerHTML = `<div class="error">${message}</div>`;
+                resultsContainer.innerHTML = '';
+            }
+
+            function showLoading() {
+                statusMsg.innerHTML = `<div class="loading">Fetching...</div>`;
+                resultsContainer.innerHTML = '';
+            }
+
+            function clearStatus() {
+                statusMsg.innerHTML = '';
+            }
+
+            async function fetchCardData(cardNumber) {
+                showLoading();
+                const targetUrl = 'https://transport-api.yerevan.am/api/citizen/card-status/';
+                const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
+
+                try {
+                    const response = await fetch(proxyUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json, text/plain, */*',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ card_number: cardNumber })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.message || `HTTP error ${response.status}`);
+                    }
+
+                    renderData(data);
+                } catch (error) {
+                    showError(`Error: ${error.message}`);
+                }
+            }
+
+            function formatDate(dateString) {
+                if (!dateString) return 'N/A';
+                return new Date(dateString).toLocaleDateString('en-GB', {
+                    day: '2-digit', month: 'short', year: 'numeric'
+                });
+            }
+
+            function renderData(data) {
+                clearStatus();
+
+                if (!data.success || !data.card_status) {
+                    showError('Failed to retrieve valid card data.');
+                    return;
+                }
+
+                const subs = data.card_status.Subscriptions || [];
+                if (subs.length === 0) {
+                    resultsContainer.innerHTML = '<p>No active subscriptions.</p>';
+                    return;
+                }
+
+                resultsContainer.innerHTML = subs.map(sub => {
+                    const ticketGroup = sub.ticket?.ticket_group || {};
+                    const title = ticketGroup.title?.en || 'Unknown Ticket';
+                    
+                    const isUnlimited = sub.TripsUnlimited;
+                    const tripsLeft = isUnlimited ? '∞' : (sub.TripsLeft ?? 'N/A');
+                    const tripsTotal = isUnlimited ? '∞' : (sub.TripsTotal ?? 'N/A');
+                    
+                    const expiryDate = formatDate(sub.ExpiryDate);
+                    const activationDate = formatDate(sub.ActivationDate);
+                    const isActive = sub.ticket?.active ? 'Active' : 'Inactive';
+
+                    return `
+                        <div class="card">
+                            <h2>${title}</h2>
+                            <div class="status">${isActive}</div>
+                            <div class="details">
+                                <span class="label">Trips:</span>
+                                <span class="value">${tripsLeft} / ${tripsTotal}</span>
+                                <span class="label">Activated:</span>
+                                <span class="value">${activationDate}</span>
+                                <span class="label">Expires:</span>
+                                <span class="value">${expiryDate}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
         });
     </script>
 </body>
